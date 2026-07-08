@@ -1,80 +1,118 @@
-const axios = require("axios");
+// services/youtubeService.js
+const axios = require('axios');
+const qs = require('querystring');
 
-async function fetchYouTubeData(url) {
-  if (!url || typeof url !== "string") {
-    throw new Error("A valid YouTube URL must be provided");
-  }
-
-  try {
-    const body = new URLSearchParams({
-      auth: "20250901majwlqo",
-      domain: "api-ak.vidssave.com",
-      origin: "cache",
-      link: url,
-    });
-
-    const { data } = await axios.post(
-      "https://api.vidssave.com/api/contentsite_api/media/parse",
-      body.toString(),
-      {
-        headers: {
-          "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-          accept: "application/json, text/plain, */*",
-          origin: "https://vidssave.com",
-          referer: "https://vidssave.com/",
-          "sec-fetch-site": "same-origin",
-          "sec-fetch-mode": "cors",
-          "sec-fetch-dest": "empty",
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-          "sec-ch-ua":
-            '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-          "sec-ch-ua-mobile": "?0",
-          "sec-ch-ua-platform": '"Windows"',
-          "accept-language": "en-US,en;q=0.9",
-          "accept-encoding": "gzip, deflate, br",
-          connection: "keep-alive",
-          "x-requested-with": "XMLHttpRequest",
-        },
-        timeout: 15000,
-      },
-    );
-
-    if (!data || data.status !== 1 || !data.data) {
-      throw new Error("Invalid response from vidssave");
+class YoutubeService {
+    constructor() {
+        this.apiUrl = 'https://api.vidssave.com/api/contentsite_api/media/parse';
+        this.headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 16; RMX5108 Build/UKQ1.231108.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.159 Mobile Safari/537.36',
+            'Referer': 'https://vidssave.com/index-2qa'
+        };
     }
 
-    const video = data.data;
+    async extractVideoUrl(youtubeUrl) {
+        try {
+            const requestData = {
+                auth: '20250901majwlqo',
+                domain: 'api-ak.vidssave.com',
+                origin: 'source',
+                link: youtubeUrl
+            };
 
-    const videos = [];
-    const audios = [];
+            const response = await axios.post(this.apiUrl, qs.stringify(requestData), {
+                headers: this.headers
+            });
 
-    (video.resources || []).forEach((r) => {
-      const item = {
-        format: r.format,
-        quality: r.quality || null,
-        url: r.download_url,
-        sizeMB: +(r.size / 1024 / 1024).toFixed(2),
-      };
+            if (response.data.status !== 1) {
+                throw new Error(`API Error: ${response.data.status_code || 'Unknown error'}`);
+            }
 
-      if (r.type === "video") videos.push(item);
-      if (r.type === "audio") audios.push(item);
-    });
+            const videoUrls = this.extractVideoUrlsFromResponse(response.data);
+            if (videoUrls.length === 0) {
+                throw new Error('No video URLs found in the response');
+            }
 
-    return {
-      type: "video",
-      url,
-      thumbnail: video.thumbnail || null,
-      title: video.title || null,
-      duration: video.duration || null,
-      videos,
-      audios,
-    };
-  } catch (err) {
-    console.error("Vidssave scrape failed:", err.message);
-    throw err;
-  }
+            const selectedVideo = this.selectBestQuality(videoUrls);
+            if (!selectedVideo) {
+                throw new Error('Could not find a suitable video URL');
+            }
+
+            return {
+                success: true,
+                data: {
+                    downloadUrl: selectedVideo.url,
+                    quality: selectedVideo.quality,
+                    format: selectedVideo.format,
+                    title: response.data.data?.title || 'Unknown Title',
+                    thumbnail: response.data.data?.thumbnail || ''
+                }
+            };
+
+        } catch (error) {
+            console.error('YouTube extraction error:', error.message);
+            return {
+                success: false,
+                error: error.message || 'Failed to extract video URL'
+            };
+        }
+    }
+
+    extractVideoUrlsFromResponse(responseData) {
+        const videoUrls = [];
+
+        if (responseData.data && responseData.data.media) {
+            for (const media of responseData.data.media) {
+                if (media.type === 'video' && media.resources) {
+                    for (const resource of media.resources) {
+                        if (resource.download_url && resource.download_url.includes('googlevideo.com')) {
+                            videoUrls.push({
+                                quality: resource.quality || '',
+                                url: resource.download_url,
+                                format: resource.format || 'MP4',
+                                size: resource.size || 0
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if (videoUrls.length === 0 && responseData.data && responseData.data.resources) {
+            for (const resource of responseData.data.resources) {
+                if (resource.type === 'video' && resource.download_url && resource.download_url.includes('googlevideo.com')) {
+                    videoUrls.push({
+                        quality: resource.quality || '',
+                        url: resource.download_url,
+                        format: resource.format || 'MP4',
+                        size: resource.size || 0
+                    });
+                }
+            }
+        }
+
+        return videoUrls;
+    }
+
+    selectBestQuality(videoUrls) {
+        const priorityQualities = ['360P', '480P', '720P'];
+        
+        for (const targetQuality of priorityQualities) {
+            const found = videoUrls.find(v => v.quality === targetQuality);
+            if (found) return found;
+        }
+
+        const qualityPriority = {
+            '1080P': 6, '720P': 5, '480P': 4, '360P': 3, '240P': 2, '144P': 1
+        };
+        const sortedVideos = videoUrls.sort((a, b) => 
+            (qualityPriority[b.quality] || 0) - (qualityPriority[a.quality] || 0)
+        );
+        const best = sortedVideos[0];
+        console.log(`Note: Preferred qualities not available. Using ${best.quality}`);
+        return best;
+    }
 }
 
-module.exports = { fetchYouTubeData };
+module.exports = YoutubeService;
