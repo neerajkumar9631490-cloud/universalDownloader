@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
-
+const youtubeRoutes = require('./routes/youtube');
 const app = express();
 
 app.use(cors());
@@ -26,7 +26,7 @@ app.use("/api/threads", require("./routes/threads"));
 app.use("/api/tiktok", require("./routes/tiktok"));
 app.use("/api/tumblr", require("./routes/tumblr"));
 app.use("/api/twitter", require("./routes/twitter"));
-app.use("/api/youtube", require("./routes/youtube"));
+app.use('/api/youtube', youtubeRoutes);
 
 const endpoints = [
   "/api/bluesky",
