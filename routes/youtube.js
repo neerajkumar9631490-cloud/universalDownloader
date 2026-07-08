@@ -1,7 +1,12 @@
-const express = require("express");
+// routes/youtube.js
+const express = require('express');
 const router = express.Router();
-const { handleYouTubeDownload } = require("../controllers/youtubeController");
+const YoutubeController = require('../controllers/youtubeController');
 
-router.get("/download", handleYouTubeDownload);
+const youtubeController = new YoutubeController();
+
+router.get('/download', (req, res) => {
+    youtubeController.download(req, res);
+});
 
 module.exports = router;
